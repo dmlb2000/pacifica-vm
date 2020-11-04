@@ -1,29 +1,98 @@
 ---
 - hosts: local
-  tasks:
-    - name: Setup Solr and Drupal Connector
-      include_role:
-        name: pacifica.ansible_drupalsolr
+  vars:
+    drupal_deploy_dir: /var/www/drupalvm/drupal
+    package_versions:
+      - pacifica/pacifica:dev-8.x-1.x
+      - pacifica/pacifica_theme:dev-8.x-1.x
+      - pacifica/pacifica_profiles:dev-8.x-1.x-vcs
+  pre_tasks:
+    - name: Check SSHD Config
+      slurp:
+        src: /etc/ssh/sshd_config
+      register: sshd_config_result
+    - name: Add sftpgroup sshd config
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        validate: /usr/sbin/sshd -T -C user=root -f %s
+        block: |
+          # Pacifica SFTP Upload Group
+          Match Group sftponly
+            AuthorizedKeysFile /etc/ssh/keys/%u
+            ChrootDirectory %h
+            ForceCommand internal-sftp
+            AllowTcpForwarding no
+            PasswordAuthentication no
+            X11Forwarding no
+      when: "'Pacifica SFTP' not in (sshd_config_result.content | b64decode)"
+    - name: Ensure FTP group
+      group:
+        name: sftponly
+        state: present
+    - name: Create directories
+      file:
+        state: directory
+        path: "{{ item.path }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - path: /etc/ssh/keys
+          group: sftponly
+          mode: '0750'
+        - path: /uploads
+        - path: /srv/cartdata
+        - path: /srv/ingestdata
+        - path: /srv/archivedata
+        - path: /srv/ingestdata/session
+    - name: Slurp composer.lock
+      slurp:
+        src: "{{ drupal_deploy_dir }}/composer.lock"
+      register: composer_lock_result
+    - name: Set Package Version Map
+      set_fact:
+        composer_package_version_dict: |
+          {{
+            (composer_lock_result.content | b64decode | from_json).packages |
+            items2dict(key_name='name', value_name='version')
+          }}
     - name: Remove Packages if Keep VCS
       command:
-        cmd: "composer remove {{ item }}"
-        chdir: /var/www/drupalvm/drupal
-      loop:
-        - pacifica/pacifica_profiles
-        - pacifica/pacifica_theme
-        - pacifica/pacifica
+        cmd: "composer remove {{ item.split(':')[0] }}"
+        chdir: "{{ drupal_deploy_dir }}"
+      loop: "{{ package_versions }}"
       when:
-        - "keep_vcs is defined and ( keep_vcs | bool )"
+        - |
+          keep_vcs is defined and ( keep_vcs | bool ) and
+          item.split(':')[0] in composer_package_version_dict.keys() and
+          item.split(':')[1] != composer_package_version_dict.get(item)
+    - name: Slurp composer.lock
+      slurp:
+        src: "{{ drupal_deploy_dir }}/composer.lock"
+      register: composer_lock_result
+    - name: Set Package Version Map
+      set_fact:
+        composer_package_version_dict: |
+          {{
+            (composer_lock_result.content | b64decode | from_json).packages |
+            items2dict(key_name='name', value_name='version')
+          }}
     - name: Require Packages if Keep VCS
       command:
         cmd: "composer require {{ item }}"
         chdir: /var/www/drupalvm/drupal
-      loop:
-        - pacifica/pacifica:dev-8.x-1.x
-        - pacifica/pacifica_theme:dev-8.x-1.x
-        - pacifica/pacifica_profiles:dev-8.x-1.x-vcs
+      loop: "{{ package_versions }}"
       when:
-        - "keep_vcs is defined and ( keep_vcs | bool )"
+        - |
+          keep_vcs is defined and ( keep_vcs | bool ) and
+          (
+            item.split(':')[0] not in composer_package_version_dict.keys() or
+            item.split(':')[1] != composer_package_version_dict.get(item)
+          )
+    - name: Run composer install
+      command: composer install
+      args:
+        chdir: /var/www/drupalvm/drupal
     - name: Verify Files Ownership
       file:
         state: directory
@@ -44,13 +113,155 @@
         name:
           - glibc-all-langpacks
           - glibc-langpack-en
-    - name: Setup PostgreSQL
-      include_role:
-        name: geerlingguy.postgresql
-    - name: Setup Redis
-      include_role:
-        name: geerlingguy.redis
-    - name: Setup Pacifica
-      include_role:
-        name: pacifica.ansible_pacifica
-
+        state: present
+    - name: Make sure users can login
+      service:
+        enabled: yes
+        name: systemd-user-sessions
+        state: started
+  roles:
+    - role: pacifica.ansible_drupalsolr
+    - role: pacifica.drupal_keycloak
+      vars:
+        drupal_deploy_dir: /var/www/drupalvm/drupal
+        keycloak_redirect_uris:
+          - https://localhost/*
+          - https://localhost:8443/*
+          - https://localhost:48443/*
+          - http://localhost/*
+          - http://localhost:8080/*
+- name: Setup Pacifica Services
+  hosts: local
+  pre_tasks:
+    - name: Get Keycloak Realm Public Key
+      command:
+        argv:
+          - /usr/local/keycloak/bin/kcadm.sh
+          - get
+          - realms/master/keys
+          - --server=https://localhost:8443/auth
+          - --realm=master
+          - --user=admin
+          - --password=admin
+      register: keycloak_master_realm_config
+    - name: Get Keycloak Client
+      command:
+        argv:
+          - /usr/local/keycloak/bin/kcadm.sh
+          - get
+          - clients
+          - --server=https://localhost:8443/auth
+          - --realm=master
+          - --user=admin
+          - --password=admin
+          - --query
+          - clientId=drupal-keycloak
+      register: keycloak_client_config
+    - name: Public Key Mapping Fact
+      set_fact:
+        public_key_type: "{{ item.type }}"
+        public_key_value: "{% if 'publicKey' in item %}{{ item.publicKey }}{% endif %}"
+      register: public_key_mapping
+      loop: "{{ (keycloak_master_realm_config.stdout | from_json).get('keys') }}"
+    - name: Set Keycloak Realm/Client Facts
+      set_fact:
+        master_realm_public_key: |
+          {{
+            (
+              public_key_mapping.results |
+              map(attribute='ansible_facts') |
+              list |
+              items2dict(key_name='public_key_type', value_name='public_key_value')
+            ).get('RSA')
+          }}
+        client_uuid: "{{ (keycloak_client_config.stdout | from_json)[0].get('id') }}"
+    - name: Get Keycloak Client Secret
+      command:
+        argv:
+          - /usr/local/keycloak/bin/kcadm.sh
+          - get
+          - "clients/{{ client_uuid }}/client-secret"
+          - --server=https://localhost:8443/auth
+          - --realm=master
+          - --user=admin
+          - --password=admin
+      register: keycloak_client_secret
+    - name: Keycloak Client Secret Fact
+      set_fact:
+        client_secret: "{{ (keycloak_client_secret.stdout | from_json).value }}"
+  roles:
+    - role: pacifica.ansible_pacifica
+      vars:
+        __common_python: &__common_python
+          aux_pkg:
+            - uwsgi
+            - pip
+            - redis
+            - amqp
+            - pymysql
+        __notify_config: &__notify_config
+          <<: *__common_python
+          ini_config:
+            celery:
+              broker_url: redis://127.0.0.1:6379/0
+            database:
+              peewee_url: mysql://notify:notify@127.0.0.1:3306/notify
+        __cartd_config: &__cartd_config
+          <<: *__common_python
+          env_vars:
+            VOLUME_PATH: /srv/cartdata
+            CARTD_CONFIG: /opt/default/cartd_frontend.ini
+            CARTD_CPCONFIG: /opt/default/cartd_frontend-cp.ini
+          ini_config:
+            celery:
+              broker_url: redis://127.0.0.1:6379/1
+            database:
+              peewee_url: mysql://cartd:cartd@127.0.0.1:3306/cartd
+        __ingest_config: &__ingest_config
+          <<: *__common_python
+          pip_module: git+https://github.com/dmlb2000/pacifica-ingest.git@major-refactor#egg=pacifica-ingest
+          override_exec: |
+            pacifica-ingest \
+              --port 48443 \
+              --config /opt/default/ingest_frontend.ini \
+              --ssl-private-key /etc/pki/tls/private/localhost.localdomain.pem \
+              --ssl-certificate /etc/pki/tls/certs/localhost.localdomain.crt \
+              --ssl-certificate-chain /etc/pki/tls/certs/pacifica_chain.io.crt \
+              --social-module keycloak \
+              --social-class KeycloakOAuth2 \
+              --social-setting keycloak_key=drupal-keycloak \
+              --social-setting keycloak_secret={{ client_secret }} \
+              --social-setting keycloak_authorization_url=https://localhost:8443/auth/realms/master/protocol/openid-connect/auth \
+              --social-setting keycloak_access_token_url=https://localhost:8443/auth/realms/master/protocol/openid-connect/token \
+              --social-setting keycloak_public_key={{ master_realm_public_key }}
+          env_vars:
+            INGEST_CONFIG: /opt/default/ingest_frontend.ini
+            REQUESTS_CA_BUNDLE: /etc/pki/tls/certs/ca-bundle.crt
+            BROKER_URL: redis://127.0.0.1:6379/2
+          ini_config:
+            ingest:
+              upload_path: /srv/ingestdata/upload
+              move_path: /srv/ingestdata/move
+              session_path: /srv/ingestdata/session
+            database:
+              db_url: mysql://ingest:ingest@127.0.0.1:3306/ingest
+        pacifica_available_services:
+          archiveinterface:
+            <<: *__common_python
+            processes: 4
+            socket_port: "48080"
+            env_vars:
+              PAI_PREFIX: /srv/archivedata
+              ARCHIVEINTERFACE_CONFIG: /opt/default/archiveinterface.ini
+              ARCHIVEINTERFACE_CPCONFIG: /opt/default/archiveinterface-cp.ini
+          uniqueid:
+            <<: *__common_python
+            ini_config:
+              database:
+                peewee_url: mysql://uniqueid:uniqueid@127.0.0.1:3306/uniqueid
+          notify_backend: *__notify_config
+          notify_frontend: *__notify_config
+          ingest_backend: *__ingest_config
+          ingest_frontend: *__ingest_config
+          cartd_backend: *__cartd_config
+          cartd_frontend: *__cartd_config

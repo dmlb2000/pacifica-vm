@@ -10,7 +10,7 @@ metadata services, and user interfaces.
 Using docker you can stand up the services:
 
 ```
-docker run -d --name=pacifica-vm --hostname=pacifica-vm -v /sys/fs/cgroup:/sys/fs/cgroup:ro --privileged -p 8000:80 pacifica/pacifica-vm:latest
+docker run -d --name=pacifica-vm --hostname=pacifica-vm -v /sys/fs/cgroup:/sys/fs/cgroup:ro --privileged -p 80:80 -p 443:443 -p 8443:8443 -p 8080:8080 pacifica/pacifica-vm:latest
 ```
 
 Then go to the (localhost site)[http://localhost:8000] to see Pacifica.

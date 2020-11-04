@@ -1,8 +1,21 @@
 ---
 - name: Setup DrupalVM
   hosts: local
+  pre_tasks:
+    - name: Install Packages
+      package:
+        name:
+          - openssh-server
+          - openssh-clients
+    - name: Start Enable SSHD
+      service:
+        name: sshd
+        enabled: yes
+        state: started
   roles:
     - role: pacifica.ansible_drupalvm
+    - role: pacifica.ansible_certinfra
+    - role: pacifica.ansible_keycloak
   post_tasks:
     - name: Create DrupalVM Config
       copy:

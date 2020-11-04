@@ -1,72 +1,5 @@
 ---
-__common_python: &__common_python
-  aux_pkg:
-    - uwsgi
-    - pip
-    - redis
-    - amqp
-    - psycopg2
-__notify_config: &__notify_config
-  <<: *__common_python
-  ini_config:
-    celery:
-      broker_url: redis://127.0.0.1:6379/0
-    database:
-      peewee_url: postgres://pacifica:pacifica@127.0.0.1:5432/pacifica_notify
-__cartd_config: &__cartd_config
-  <<: *__common_python
-  env_vars:
-    VOLUME_PATH: /srv/cartdata
-    CARTD_CONFIG: /opt/default/cartd_frontend.ini
-    CARTD_CPCONFIG: /opt/default/cartd_frontend-cp.ini
-  ini_config:
-    celery:
-      broker_url: redis://127.0.0.1:6379/1
-    database:
-      peewee_url: postgres://pacifica:pacifica@127.0.0.1:5432/pacifica_cartd
-__ingest_config: &__ingest_config
-  <<: *__common_python
-  env_vars:
-    VOLUME_PATH: /srv/ingestdata
-    INGEST_CONFIG: /opt/default/ingest_frontend.ini
-    INGEST_CPCONFIG: /opt/default/ingest_frontend-cp.ini
-  ini_config:
-    celery:
-      broker_url: redis://127.0.0.1:6379/2
-    database:
-      peewee_url: postgres://pacifica:pacifica@127.0.0.1:5432/pacifica_ingest
-pacifica_available_services:
-  archiveinterface:
-    <<: *__common_python
-    processes: 4
-    env_vars:
-      PAI_PREFIX: /srv/archivedata
-      ARCHIVEINTERFACE_CONFIG: /opt/default/archiveinterface.ini
-      ARCHIVEINTERFACE_CPCONFIG: /opt/default/archiveinterface-cp.ini
-  metadata:
-    <<: *__common_python
-    ini_config:
-      database:
-        peewee_url: postgres://pacifica:pacifica@127.0.0.1:5432/pacifica_metadata
-  proxy:
-    <<: *__common_python
-  policy:
-    <<: *__common_python
-  uniqueid:
-    <<: *__common_python
-    ini_config:
-      database:
-        peewee_url: postgres://pacifica:pacifica@127.0.0.1:5432/pacifica_uniqueid
-  notify_backend: *__notify_config
-  notify_frontend: *__notify_config
-  ingest_backend: *__ingest_config
-  ingest_frontend: *__ingest_config
-  cartd_backend: *__cartd_config
-  cartd_frontend: *__cartd_config
 pacifica_enabled_services:
-  - metadata
-  - policy
-  - proxy
   - uniqueid
   - archiveinterface
   - cartd_frontend
@@ -76,31 +9,11 @@ pacifica_enabled_services:
   - notify_frontend
   - notify_backend
 
-postgresql_databases:
-  - name: pacifica_metadata
-    owner: pacifica
-  - name: pacifica_uniqueid
-    owner: pacifica
-  - name: pacifica_ingest
-    owner: pacifica
-  - name: pacifica_cartd
-    owner: pacifica
-  - name: pacifica_notify
-    owner: pacifica
-postgresql_users:
-  - name: pacifica
-    pass: pacifica
-    password: pacifica
-postgresql_service_state: started
-postgresql_service_enabled: true
-postgresql_packages:
-  - postgresql
-  - postgresql-devel
-  - postgresql-server
-  - postgresql-contrib
+
 drupal_compose_project_options_dev: "{% if keep_vcs is defined and ( keep_vcs | bool ) %}--keep-vcs{% endif %}"
 drupal_compose_project_package_version: "{% if keep_vcs is defined and ( keep_vcs | bool ) %}8.x-vcs-dev{% else %}0.1.0{% endif %}"
 drupalvm_config:
+  composer_version: '1.10.16'
   hostname_configure: false
   firewall_enabled: false
   drupal_build_makefile: false
@@ -109,6 +22,7 @@ drupalvm_config:
   drupal_composer_project_options: "--prefer-dist --stability dev --no-interaction {{ drupal_compose_project_options_dev }}"
   installed_extras:
     - drush
+    - redis
     - nodejs
     - solr
     - mailhog
@@ -121,8 +35,6 @@ drupalvm_config:
     - vim
     - cronie
     - crontabs
-    - openssh-server
-    - openssh-clients
   php_apc_shm_size: "1024M"
   php_memory_limit: "4096M"
   php_upload_max_filesize: "4096M"
@@ -146,3 +58,66 @@ drupalvm_config:
     - "restui"
     - "basic_auth"
     - "key_auth"
+  mysql_databases:
+    - name: "drupal"
+      encoding: utf8mb4
+      collation: utf8mb4_general_ci
+    - name: "cartd"
+      encoding: utf8mb4
+      collation: utf8mb4_general_ci
+    - name: "ingest"
+      encoding: utf8mb4
+      collation: utf8mb4_general_ci
+    - name: "uniqueid"
+      encoding: utf8mb4
+      collation: utf8mb4_general_ci
+    - name: "notify"
+      encoding: utf8mb4
+      collation: utf8mb4_general_ci
+  mysql_users:
+    - name: "drupal"
+      host: "%"
+      password: "drupal"
+      priv: "drupal.*:ALL"
+    - name: "cartd"
+      host: "%"
+      password: "cartd"
+      priv: "cartd.*:ALL"
+    - name: "ingest"
+      host: "%"
+      password: "ingest"
+      priv: "ingest.*:ALL"
+    - name: "notify"
+      host: "%"
+      password: "notify"
+      priv: "notify.*:ALL"
+    - name: "uniqueid"
+      host: "%"
+      password: "uniqueid"
+      priv: "uniqueid.*:ALL"
+  drupal_domain: localhost
+  extra_default_ssl_aliases: localhost.localdomain
+  extra_default_aliases: localhost.localdomain
+  apache_secure_headers: |
+    Header unset X-Generator
+  apache_redirect_https: |
+    RewriteEngine On
+    RewriteCond %{HTTPS} !=on
+    RewriteRule ^/?(.*) https://%{SERVER_NAME}/$1 [R,L]
+  apache_ssl_cipher_suite: "EECDH:!RC4:!3des:!SHA"
+  apache_ssl_protocol: "-all +TLSv1.2"
+  apache_vhosts_ssl:
+    - servername: "{% raw %}{{ drupal_domain }}{% endraw %}"
+      serveralias: "{% raw %}{{ extra_default_ssl_aliases | default('') }}{% endraw %}"
+      documentroot: "{% raw %}{{ drupal_core_path }}{% endraw %}"
+      certificate_file: /etc/pki/tls/certs/localhost.localdomain.crt
+      certificate_key_file: /etc/pki/tls/private/localhost.localdomain.pem
+      certificate_chain_file: /etc/pki/tls/certs/pacifica_chain.io.crt
+      extra_parameters: "{% raw %}{{ apache_secure_headers }}{{ apache_vhost_php_fpm_parameters }}{% endraw %}"
+  apache_vhosts:
+    - servername: "{% raw %}{{ drupal_domain }}{% endraw %}"
+      serveralias: "{% raw %}{{ extra_default_aliases | default('') }}{% endraw %}"
+      documentroot: "{% raw %}{{ drupal_core_path }}{% endraw %}"
+      extra_parameters: "{% raw %}{{ apache_redirect_https }}{% endraw %}"
+  apache_global_vhost_settings: |
+    ServerTokens Prod

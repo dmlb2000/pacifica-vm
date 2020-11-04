@@ -14,13 +14,10 @@
         return_content: true
       register: url_resp
       loop:
-        - 8121
         - 8080
-        - 8180
-        - 8066
-        - 8181
-        - 8051
-        - 8081
+        - 8443
+        - 80
+        - 443
     - name: Assert Status
       assert:
         that:
