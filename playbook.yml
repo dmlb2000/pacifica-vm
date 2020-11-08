@@ -115,10 +115,13 @@
           - glibc-langpack-en
         state: present
     - name: Make sure users can login
-      service:
-        enabled: yes
-        name: systemd-user-sessions
-        state: started
+      file:
+        src: /lib/systemd/system/systemd-user-sessions.service
+        dest: /etc/systemd/system/multi-user.target.wants/systemd-user-sessions.service
+        mode: '0644'
+        owner: root
+        group: root
+        state: link
   roles:
     - role: pacifica.ansible_drupalsolr
     - role: pacifica.drupal_keycloak
@@ -220,31 +223,33 @@
         __ingest_config: &__ingest_config
           <<: *__common_python
           pip_module: git+https://github.com/dmlb2000/pacifica-ingest.git@major-refactor#egg=pacifica-ingest
-          override_exec: |
-            pacifica-ingest \
-              --port 48443 \
-              --config /opt/default/ingest_frontend.ini \
-              --ssl-private-key /etc/pki/tls/private/localhost.localdomain.pem \
-              --ssl-certificate /etc/pki/tls/certs/localhost.localdomain.crt \
-              --ssl-certificate-chain /etc/pki/tls/certs/pacifica_chain.io.crt \
-              --social-module keycloak \
-              --social-class KeycloakOAuth2 \
-              --social-setting keycloak_key=drupal-keycloak \
-              --social-setting keycloak_secret={{ client_secret }} \
-              --social-setting keycloak_authorization_url=https://localhost:8443/auth/realms/master/protocol/openid-connect/auth \
-              --social-setting keycloak_access_token_url=https://localhost:8443/auth/realms/master/protocol/openid-connect/token \
-              --social-setting keycloak_public_key={{ master_realm_public_key }}
+          override_exec: pacifica-ingest
           env_vars:
-            INGEST_CONFIG: /opt/default/ingest_frontend.ini
+            CONFIG_FILE: /opt/default/ingest_frontend.ini
             REQUESTS_CA_BUNDLE: /etc/pki/tls/certs/ca-bundle.crt
             BROKER_URL: redis://127.0.0.1:6379/2
           ini_config:
+            cherrypy:
+              port: '48443'
+              host: '0.0.0.0'
+              app_dir: /opt/session-app
+              ssl_private_key: /etc/pki/tls/private/localhost.localdomain.pem
+              ssl_certificate: /etc/pki/tls/certs/localhost.localdomain.crt
+              ssl_certificate_chain: /etc/pki/tls/certs/pacifica_chain.io.crt
+              social_module: keycloak
+              social_class: KeycloakOAuth2
+            social_settings:
+              keycloak_key: drupal-keycloak
+              keycloak_secret: "{{ client_secret }}"
+              keycloak_authorization_url: https://localhost:8443/auth/realms/master/protocol/openid-connect/auth
+              keycloak_access_token_url: https://localhost:8443/auth/realms/master/protocol/openid-connect/token
+              keycloak_public_key: "{{ master_realm_public_key }}"
             ingest:
               upload_path: /srv/ingestdata/upload
               move_path: /srv/ingestdata/move
               session_path: /srv/ingestdata/session
             database:
-              db_url: mysql://ingest:ingest@127.0.0.1:3306/ingest
+              db_url: mysql+pymysql://ingest:ingest@127.0.0.1:3306/ingest
         pacifica_available_services:
           archiveinterface:
             <<: *__common_python

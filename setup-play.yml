@@ -7,9 +7,15 @@
         name:
           - openssh-server
           - openssh-clients
+          - rsyslog
     - name: Start Enable SSHD
       service:
         name: sshd
+        enabled: yes
+        state: started
+    - name: Start Enable rsyslog
+      service:
+        name: rsyslog
         enabled: yes
         state: started
   roles:
