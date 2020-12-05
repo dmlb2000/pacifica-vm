@@ -10,4 +10,4 @@
 - src: pacifica.ansible_keycloak
   version: v0.2.0
 - src: pacifica.drupal_keycloak
-  version: v0.4.1
+  version: v1.0.0

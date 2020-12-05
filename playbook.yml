@@ -3,9 +3,9 @@
   vars:
     drupal_deploy_dir: /var/www/drupalvm/drupal
     package_versions:
-      - pacifica/pacifica:dev-8.x-1.x
-      - pacifica/pacifica_theme:dev-8.x-1.x
-      - pacifica/pacifica_profiles:dev-8.x-1.x-vcs
+      - pacifica/pacifica:dev-9.x-1.x
+      - pacifica/pacifica_theme:dev-9.x-1.x
+      - pacifica/pacifica_profiles:dev-9.x-1.x-vcs
   pre_tasks:
     - name: Check SSHD Config
       slurp:
@@ -45,54 +45,6 @@
         - path: /srv/ingestdata
         - path: /srv/archivedata
         - path: /srv/ingestdata/session
-    - name: Slurp composer.lock
-      slurp:
-        src: "{{ drupal_deploy_dir }}/composer.lock"
-      register: composer_lock_result
-    - name: Set Package Version Map
-      set_fact:
-        composer_package_version_dict: |
-          {{
-            (composer_lock_result.content | b64decode | from_json).packages |
-            items2dict(key_name='name', value_name='version')
-          }}
-    - name: Remove Packages if Keep VCS
-      command:
-        cmd: "composer remove {{ item.split(':')[0] }}"
-        chdir: "{{ drupal_deploy_dir }}"
-      loop: "{{ package_versions }}"
-      when:
-        - |
-          keep_vcs is defined and ( keep_vcs | bool ) and
-          item.split(':')[0] in composer_package_version_dict.keys() and
-          item.split(':')[1] != composer_package_version_dict.get(item)
-    - name: Slurp composer.lock
-      slurp:
-        src: "{{ drupal_deploy_dir }}/composer.lock"
-      register: composer_lock_result
-    - name: Set Package Version Map
-      set_fact:
-        composer_package_version_dict: |
-          {{
-            (composer_lock_result.content | b64decode | from_json).packages |
-            items2dict(key_name='name', value_name='version')
-          }}
-    - name: Require Packages if Keep VCS
-      command:
-        cmd: "composer require {{ item }}"
-        chdir: /var/www/drupalvm/drupal
-      loop: "{{ package_versions }}"
-      when:
-        - |
-          keep_vcs is defined and ( keep_vcs | bool ) and
-          (
-            item.split(':')[0] not in composer_package_version_dict.keys() or
-            item.split(':')[1] != composer_package_version_dict.get(item)
-          )
-    - name: Run composer install
-      command: composer install
-      args:
-        chdir: /var/www/drupalvm/drupal
     - name: Verify Files Ownership
       file:
         state: directory

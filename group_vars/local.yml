@@ -11,9 +11,9 @@ pacifica_enabled_services:
 
 
 drupal_compose_project_options_dev: "{% if keep_vcs is defined and ( keep_vcs | bool ) %}--keep-vcs{% endif %}"
-drupal_compose_project_package_version: "{% if keep_vcs is defined and ( keep_vcs | bool ) %}8.x-vcs-dev{% else %}0.1.0{% endif %}"
+drupal_compose_project_package_version: "{% if keep_vcs is defined and ( keep_vcs | bool ) %}9.x-vcs-dev{% else %}0.1.0{% endif %}"
 drupalvm_config:
-  composer_version: '1.10.16'
+  composer_version: '1.10.17'
   hostname_configure: false
   firewall_enabled: false
   drupal_build_makefile: false
@@ -52,7 +52,6 @@ drupalvm_config:
   mysql_innodb_flush_method: O_DIRECT
   drupal_site_name: Pacifica Site
   drupal_composer_dependencies:
-    - '"symfony/event-dispatcher:4.3.11 as 3.4.41"'
     - "drupal/key_auth"
     - "drupal/restui"
   drupal_enable_modules:
